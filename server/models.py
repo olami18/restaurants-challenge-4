@@ -1,38 +1,61 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
+from sqlalchemy_serializer import SerializerMixin
 from sqlalchemy.orm import validates
-from flask_marshmallow import Marshmallow
-db = SQLAlchemy()
-ma = Marshmallow()
-# RestaurantPizza many-to-many relationship table
-restaurant_pizzas = db.Table('restaurant_pizzas',
-                             db.Column('pizza_id', db.Integer, db.ForeignKey('pizza.id'), primary_key=True),
-                             db.Column('restaurant_id', db.Integer, db.ForeignKey('restaurant.id'), primary_key=True),
-                             db.Column('price', db.Float, nullable=False)
-                             )
-# Restaurant Model
-class Restaurant(db.Model):
+
+metadata = MetaData(naming_convention={
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+})
+
+db = SQLAlchemy(metadata=metadata)
+
+class Pizza(db.Model, SerializerMixin):
+    __tablename__ = 'pizzas'
+    serialize_rules = ('-restaurants.pizza', '-restaurant.pizzas')
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), unique=True)
-    address = db.Column(db.String(200))
-    pizzas = db.relationship('Pizza', secondary=restaurant_pizzas, backref=db.backref('restaurants', lazy='dynamic'))
-    @validates('name')
+    name = db.Column(db.String)
+    ingredients = db.Column(db.String)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    updated_at = db.Column(db.DateTime, onupdate=db.func.now())
+    
+    restaurants = db.relationship('RestaurantPizza', back_populates='pizza')
+    
+    # create resaurant_pizza object
+class RestaurantPizza(db.Model):
+    __tablename__ = 'restaurant_pizzas'
+    serialize_rules = ('restaurant', 'pizza')
+   
+    id = db.Column(db.Integer, primary_key=True)
+    pizza_id = db.Column(db.Integer, db.ForeignKey('pizzas.id'))
+    restaurant_id = db.Column(db.Integer, db.ForeignKey('restaurants.id'))
+    price = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    updated_at = db.Column(db.DateTime, onupdate=db.func.now())
+     # Define relationships to Restaurant and Pizza models
+    restaurant = db.relationship('Restaurant', back_populates='pizzas')
+    pizza = db.relationship('Pizza', back_populates='restaurants')
+
+    # Define a back reference to the Restaurant model
+    @validates("price")
+    def validate_price(self, key, value):
+        if not (1 <= value <= 30):
+            raise ValueError("Price must be between 1 and 30")
+        return value
+
+# create restaurant tablee
+class Restaurant(db.Model, SerializerMixin):
+    __tablename__ = 'restaurants'
+    serialize_rules = ('-pizzas.restaurant', '-restaurant.pizzas')
+   
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String, unique=True, nullable=False)
+    address = db.Column(db.String)
+    
+    # Define a back reference to the RestaurantPizza model
+    pizzas = db.relationship('RestaurantPizza', back_populates='restaurant')
+   # ensure that the  name is less than 50 characters 
+    @validates("name")
     def validate_name(self, key, name):
-        assert len(name) <= 50, "Must have a name less than 50 words in length"
+        if name and len(name) > 50:
+            raise ValueError("Name must be less than 50 characters in length")
         return name
-# Pizza Model
-class Pizza(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50))
-    ingredients = db.Column(db.String(200))
-# Restaurant Schema
-class RestaurantSchema(ma.Schema):
-    class Meta:
-        fields = ('id', 'name', 'address')
-# Pizza Schema
-class PizzaSchema(ma.Schema):
-    class Meta:
-        fields = ('id', 'name', 'ingredients')
-restaurant_schema = RestaurantSchema()
-restaurants_schema = RestaurantSchema(many=True)
-pizza_schema = PizzaSchema()
-pizzas_schema = PizzaSchema(many=True)
